@@ -4,8 +4,11 @@ import android.Manifest
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothSocket
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.widget.Button
 import android.widget.Toast
@@ -18,6 +21,8 @@ class MainActivity : AppCompatActivity() {
 
     private val REQUEST_PERMISSIONS_CODE = 1
 
+    private lateinit var btnConnect: Button
+
     private val requiredPermissions = arrayOf(
         Manifest.permission.BLUETOOTH,
         Manifest.permission.BLUETOOTH_CONNECT,
@@ -25,8 +30,7 @@ class MainActivity : AppCompatActivity() {
         Manifest.permission.ACCESS_COARSE_LOCATION
     )
 
-    //Modificacion 3 desde el MAC y desde Windows
-    private val deviceName = "ESP32-BT-Slave"
+    private val deviceName = "ESP32"
     private val sppUUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB") // UUID estándar SPP
     private var btSocket: BluetoothSocket? = null
     private lateinit var btDevice: BluetoothDevice
@@ -41,36 +45,73 @@ class MainActivity : AppCompatActivity() {
             solicitarPermiso()
         }
 
-        val btnConnect = findViewById<Button>(R.id.btnConnect)
+        btnConnect = findViewById(R.id.btnConnect)
+        val btnMensaje = findViewById<Button>(R.id.btnMensaje)
 
         btnConnect.setOnClickListener {
-            if (!hasPermissions()) {
-                Toast.makeText(this, "Permisos necesarios no otorgados", Toast.LENGTH_SHORT).show()
-                solicitarPermiso()
-                return@setOnClickListener
-            }
+            if (btSocket == null || !btSocket!!.isConnected) {
+                if (!hasPermissions()) {
+                    Toast.makeText(this, "Permisos necesarios no otorgados", Toast.LENGTH_SHORT).show()
+                    solicitarPermiso()
+                    return@setOnClickListener
+                }
 
-            if (btAdapter == null) {
-                Toast.makeText(this, "Bluetooth no está disponible", Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
-            }
+                if (btAdapter == null) {
+                    Toast.makeText(this, "Bluetooth no está disponible", Toast.LENGTH_SHORT).show()
+                    return@setOnClickListener
+                }
 
-            if (!btAdapter.isEnabled) {
-                Toast.makeText(this, "Activa el Bluetooth", Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
-            }
+                if (!btAdapter.isEnabled) {
+                    Toast.makeText(this, "Activa el Bluetooth", Toast.LENGTH_SHORT).show()
+                    return@setOnClickListener
+                }
 
-            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
-                val pairedDevices: Set<BluetoothDevice> = btAdapter.bondedDevices
-                btDevice = pairedDevices.find { it.name == deviceName }
-                    ?: run {
-                        Toast.makeText(this, "ESP32 no emparejado", Toast.LENGTH_SHORT).show()
-                        return@setOnClickListener
-                    }
+                if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
+                    val pairedDevices: Set<BluetoothDevice> = btAdapter.bondedDevices
+                    btDevice = pairedDevices.find { it.name == deviceName }
+                        ?: run {
+                            Toast.makeText(this, "ESP32 no emparejado", Toast.LENGTH_SHORT).show()
+                            return@setOnClickListener
+                        }
 
-                connectToDevice()
+                    connectToDevice()
+                } else {
+                    Toast.makeText(this, "No tienes permiso BLUETOOTH_CONNECT", Toast.LENGTH_SHORT).show()
+                }
             } else {
-                Toast.makeText(this, "No tienes permiso BLUETOOTH_CONNECT", Toast.LENGTH_SHORT).show()
+                try {
+                    btSocket?.close()
+                    btSocket = null
+                    Toast.makeText(this, "Conexión finalizada", Toast.LENGTH_SHORT).show()
+                    btnConnect.text = getString(R.string.btnConectar)
+                } catch (e: IOException) {
+                    Toast.makeText(this, "Error al desconectar: ${e.message}", Toast.LENGTH_SHORT).show()
+                    Log.e("Bluetooth", "Error al cerrar socket", e)
+                }
+            }
+        }
+
+        btnMensaje.setOnClickListener {
+            if (btSocket != null && btSocket!!.isConnected) {
+                try {
+                    //btSocket?.outputStream?.write("Hola desde el Boton\n".toByteArray())
+                    try {
+                        btSocket?.close()
+                        btSocket = null
+                        Toast.makeText(this, "Conexión finalizada", Toast.LENGTH_SHORT).show()
+                        btnConnect.text = getString(R.string.btnConectar)
+                    } catch (e: IOException) {
+                        Toast.makeText(this, "Error al desconectar: ${e.message}", Toast.LENGTH_SHORT).show()
+                        Log.e("Bluetooth", "Error al cerrar socket", e)
+                    }
+                    val intent = Intent(this, ServicioConexion::class.java)
+                    startService(intent)
+               } catch (e: IOException){
+                    Toast.makeText(this, "Error al enviar mensaje: ${e.message}", Toast.LENGTH_SHORT).show()
+                    Log.e("Bluetooth", "Error al enviar", e)
+                }
+            } else {
+                Toast.makeText(this, "Dispositivo No Conectado", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -115,6 +156,7 @@ class MainActivity : AppCompatActivity() {
                 btSocket?.connect()
                 runOnUiThread {
                     Toast.makeText(this, "Conectado al ESP32", Toast.LENGTH_SHORT).show()
+                    btnConnect.text = getString(R.string.btnDesconectar)
                 }
 
                 // Aquí puedes enviar datos
