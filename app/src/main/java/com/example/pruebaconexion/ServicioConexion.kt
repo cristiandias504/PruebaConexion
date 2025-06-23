@@ -91,6 +91,29 @@ class ServicioConexion : Service() {
             }
 
             try {
+                if (!hasPermissions()) {
+                    Handler(Looper.getMainLooper()).post {
+                        Toast.makeText(this, "Permisos necesarios no otorgados", Toast.LENGTH_SHORT)
+                            .show()
+                    }
+                    return@Thread
+                }
+
+                if (btAdapter == null) {
+                    Handler(Looper.getMainLooper()).post {
+                        Toast.makeText(this, "Bluetooth no está disponible", Toast.LENGTH_SHORT)
+                            .show()
+                    }
+                    return@Thread
+                }
+
+                if (!btAdapter.isEnabled) {
+                    Handler(Looper.getMainLooper()).post {
+                        Toast.makeText(this, "Activa el Bluetooth", Toast.LENGTH_SHORT).show()
+                    }
+                    return@Thread
+                }
+
                 val pairedDevices: Set<BluetoothDevice>? = btAdapter?.bondedDevices
                 btDevice = pairedDevices?.find { it.name == deviceName }
                     ?: run {
@@ -143,6 +166,12 @@ class ServicioConexion : Service() {
             }
         } else {
             Toast.makeText(this, "Dispositivo No Conectado", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun hasPermissions(): Boolean {
+        return requiredPermissions.all { permission ->
+            ActivityCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
         }
     }
 
