@@ -13,6 +13,7 @@ import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.widget.Button
+import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
@@ -26,6 +27,7 @@ class MainActivity : AppCompatActivity() {
     // Inicializar los botones sin definirlos totalmente
     private lateinit var btnConnect: Button
     private lateinit var btnMensaje: Button
+    private lateinit var CuadroMensaje: TextView
 
     // Variable estado de conexion
     private var estadoConexion = false
@@ -49,13 +51,18 @@ class MainActivity : AppCompatActivity() {
         override fun onReceive(context: Context?, intent: Intent?) {
             val mensaje = intent?.getStringExtra("Mensaje") ?: "Sin mensaje"
             Log.d("MainActivity", "Mensaje recibido: $mensaje")
-            Toast.makeText(this@MainActivity, mensaje, Toast.LENGTH_SHORT).show()
-            if (mensaje == "Mensaje enviado desde el Servicio") {
+            if (mensaje == "Conexion establecida Correctamente") {
                 btnConnect.text = getString(R.string.btnDesconectar)
                 estadoConexion = true
             } else if (mensaje == "Conexión Bluetooth finalizada") {
                 btnConnect.text = getString(R.string.btnConectar)
                 estadoConexion = false
+            } else if (mensaje == "Respuesta Verificacion de estado = true"){
+                btnConnect.text = getString(R.string.btnDesconectar)
+                estadoConexion = true
+                Log.d("MainActivity", "Verificacion Completa: Servicio Activo")
+            } else {
+                CuadroMensaje.text = mensaje.toString()
             }
         }
     }
@@ -71,6 +78,16 @@ class MainActivity : AppCompatActivity() {
 
         btnConnect = findViewById(R.id.btnConnect)
         btnMensaje = findViewById(R.id.btnMensaje)
+        CuadroMensaje = findViewById(R.id.textView)
+
+        // Crear y enviar el broadcast
+        val intentBroadcast = Intent("com.example.pruebaconexion.MensajeDeActivity").apply {
+            setPackage(packageName)
+            putExtra("Mensaje", "Verificacion de estado")
+        }
+
+        Log.d("MainActivity", "Verificacion de estado")
+        sendBroadcast(intentBroadcast)
 
 
         btnConnect.setOnClickListener {
@@ -122,7 +139,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
-        val filter = IntentFilter("com.example.pruebaconexion.MENSAJE")
+        val filter = IntentFilter("com.example.pruebaconexion.MensajeDeServicio")
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(receptorMensaje, filter, Context.RECEIVER_NOT_EXPORTED)

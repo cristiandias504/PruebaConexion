@@ -7,7 +7,10 @@ import android.app.Service
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothSocket
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Handler
@@ -36,11 +39,39 @@ class ServicioConexion : Service() {
     private var servicioActivo = false
     private var conexionEstablecida = false
 
+
+    // Receptor de Broadcast
+    private val receptorMensaje = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val mensaje = intent?.getStringExtra("Mensaje") ?: "Sin mensaje"
+            Log.d("ServicioConexion", "Mensaje recibido: $mensaje")
+            if (mensaje == "Verificacion de estado") {
+                val intentBroadcast = Intent("com.example.pruebaconexion.MensajeDeServicio").apply {
+                    setPackage(packageName)
+                    putExtra("Mensaje", "Respuesta Verificacion de estado = $conexionEstablecida")
+                }
+
+                Log.d("ServicioConexion", "Respuesta Verificacion de estado = $conexionEstablecida")
+                sendBroadcast(intentBroadcast)
+            }
+        }
+    }
+
+
     override fun onCreate() {
         super.onCreate()
         crearCanal()
         iniciarComoForeground()
         connectToDevice()
+
+
+        val filter = IntentFilter("com.example.pruebaconexion.MensajeDeActivity")
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(receptorMensaje, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(receptorMensaje, filter)
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -75,73 +106,62 @@ class ServicioConexion : Service() {
 
     private fun connectToDevice() {
         Thread {
-            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
-                Handler(Looper.getMainLooper()).post {
-                    Toast.makeText(this, "Sin permiso BLUETOOTH_CONNECT", Toast.LENGTH_SHORT).show()
-                }
-                return@Thread
-            }
-
-
-
-
-            try {
-
-                if (btAdapter == null) {
-                    Handler(Looper.getMainLooper()).post {
-                        Toast.makeText(this, "Bluetooth no está disponible", Toast.LENGTH_SHORT)
-                            .show()
-                    }
-                    return@Thread
-                }
-
-                if (!btAdapter.isEnabled) {
-                    Handler(Looper.getMainLooper()).post {
-                        Toast.makeText(this, "Activa el Bluetooth", Toast.LENGTH_SHORT).show()
-                    }
-                    return@Thread
-                }
-
-                val pairedDevices: Set<BluetoothDevice>? = btAdapter?.bondedDevices
-                btDevice = pairedDevices?.find { it.name == deviceName }
-                    ?: run {
-                        Toast.makeText(this, "ESP32 no emparejado", Toast.LENGTH_SHORT).show()
+            while (!conexionEstablecida) {
+                try {
+                    if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                        Handler(Looper.getMainLooper()).post {
+                            Toast.makeText(this, "Sin permiso BLUETOOTH_CONNECT", Toast.LENGTH_SHORT).show()
+                        }
                         return@Thread
                     }
 
-                btSocket = btDevice.createRfcommSocketToServiceRecord(sppUUID)
-                btSocket?.connect()
-                Handler(Looper.getMainLooper()).post {
-                    Toast.makeText(this, "Conectado Desde el Servicio", Toast.LENGTH_SHORT).show()
-                }
-                // Crear y enviar el broadcast
-                val intentBroadcast = Intent("com.example.pruebaconexion.MENSAJE").apply {
-                    setPackage(packageName)
-                    putExtra("Mensaje", "Mensaje enviado desde el Servicio")
-                }
+                    if (btAdapter == null) {
+                        Handler(Looper.getMainLooper()).post {
+                            Toast.makeText(this, "Bluetooth no está disponible", Toast.LENGTH_SHORT)
+                                .show()
+                        }
+                        return@Thread
+                    }
 
-                Log.d("ServicioConexion", "Enviando broadcast...")
-                sendBroadcast(intentBroadcast)
+                    if (!btAdapter.isEnabled) {
+                        Handler(Looper.getMainLooper()).post {
+                            Toast.makeText(this, "Activa el Bluetooth", Toast.LENGTH_SHORT).show()
+                        }
+                        return@Thread
+                    }
 
-                conexionEstablecida = true
-                iniciarMensajePeriodico()
-                iniciarRecepcionMensajes()
+                    val pairedDevices: Set<BluetoothDevice>? = btAdapter?.bondedDevices
+                    btDevice = pairedDevices?.find { it.name == deviceName }
+                        ?: run {
+                            Toast.makeText(this, "ESP32 no emparejado", Toast.LENGTH_SHORT).show()
+                            return@Thread
+                        }
 
-            } catch (e: IOException) {
-                Handler(Looper.getMainLooper()).post {
-                    Toast.makeText(this, "Error de conexión: ${e.message}", Toast.LENGTH_SHORT).show()
+                    btSocket = btDevice.createRfcommSocketToServiceRecord(sppUUID)
+                    btSocket?.connect()
+
+                    // Crear y enviar el broadcast
+                    val intentBroadcast = Intent("com.example.pruebaconexion.MensajeDeServicio").apply {
+                        setPackage(packageName)
+                        putExtra("Mensaje", "Conexion establecida Correctamente")
+                    }
+
+                    Log.d("ServicioConexion", "Conexion establecida Correctamente")
+                    sendBroadcast(intentBroadcast)
+
+                    conexionEstablecida = true
+                    servicioActivo = false
+                    iniciarMensajePeriodico()
+                    iniciarRecepcionMensajes()
+
+                } catch (e: InterruptedException) {
+                    Log.e("ServicioConexion", "Bucle de reconexión interrumpido", e)
+                    break
+                } catch (e: IOException) {
+                    Log.d("ServicioConexion", "Intentando reconectar con ESP32...")
                 }
-                Log.e("Bluetooth", "Error: ", e)
+                Thread.sleep(10_000) // espera 10 segundos antes de volver a intentar
             }
-
-
-
-
-
-
-
-
-
         }.start()
     }
 
@@ -152,8 +172,12 @@ class ServicioConexion : Service() {
                 handler = Handler(Looper.getMainLooper())
                 runnable = object : Runnable {
                     override fun run() {
-                        enviarMensaje()
-                        handler.postDelayed(this, 10_000) // cada 10 segundos
+                        if(conexionEstablecida){
+                            enviarMensaje()
+                            handler.postDelayed(this, 10_000) // cada 10 segundos
+                        } else {
+                            Log.d("ServicioConexion", "Runnable detenido por desconexión")
+                        }
                     }
                 }
                 Log.d("ServicioConexion", "Handler Iniciado")
@@ -171,14 +195,10 @@ class ServicioConexion : Service() {
                 btSocket?.outputStream?.write("Hola desde el Servicio\n".toByteArray())
                 Log.d("ServicioConexion", "Mensaje enviado al ESP32")
             } catch (e: IOException){
-                Log.e("ServicioConexion", "Error al enviar", e)
-
+                reiniciarConexion()
             }
         } else {
-            Handler(Looper.getMainLooper()).post {
-                Toast.makeText(this, "Dispositivo No Conectado", Toast.LENGTH_SHORT).show()
-            }
-            Log.d("ServicioConexion", "Dispositivo No Conectado")
+            reiniciarConexion()
         }
     }
 
@@ -198,11 +218,12 @@ class ServicioConexion : Service() {
                             val mensajeCompleto = mensajeAcumulado.toString().trim()
                             Log.d("Bluetooth", "Mensaje recibido: $mensajeCompleto")
 
-                            // Enviar a la actividad si quieres
-                            //val intent = Intent("com.example.pruebaconexion.MENSAJE").apply {
-                            //    putExtra("Mensaje", mensajeCompleto)
-                            //}
-                            //sendBroadcast(intent)
+                            // Enviar a la actividad
+                            val intentBroadcast = Intent("com.example.pruebaconexion.MensajeDeServicio").apply {
+                                setPackage(packageName)
+                                putExtra("Mensaje", mensajeCompleto)
+                            }
+                            sendBroadcast(intentBroadcast)
 
                             mensajeAcumulado.clear() // reinicia para el siguiente mensaje
                         } else {
@@ -216,6 +237,26 @@ class ServicioConexion : Service() {
         }.start()
     }
 
+    private fun reiniciarConexion() {
+        Log.d("ServicioConexion", "Dispositivo No Conectado... Reiniciando conexión")
+        conexionEstablecida = false
+        cerrarSocket()
+        Thread {
+            Thread.sleep(10_000)
+            handler.removeCallbacks(runnable)
+        }.start()
+        connectToDevice()
+    }
+
+    private fun cerrarSocket() {
+        try {
+            btSocket?.close()
+            Log.d("ServicioConexion", "BluetoothSocket cerrado")
+        } catch (e: IOException) {
+            Log.e("ServicioConexion", "Error al cerrar el socket", e)
+        }
+    }
+
 
 
     override fun onDestroy() {
@@ -224,16 +265,14 @@ class ServicioConexion : Service() {
         super.onDestroy()
 
         // Cierra el socket Bluetooth
-        try {
-            btSocket?.close()
-            Log.d("ServicioConexion", "BluetoothSocket cerrado")
-        } catch (e: IOException) {
-            Log.e("ServicioConexion", "Error al cerrar el socket", e)
-        }
+        cerrarSocket()
+
+        // Elimina el registro en el Broadcast
+        unregisterReceiver(receptorMensaje)
 
         Log.d("ServicioConexion", "Finalizando Servicio")
 
-        val intentBroadcast = Intent("com.example.pruebaconexion.MENSAJE").apply {
+        val intentBroadcast = Intent("com.example.pruebaconexion.MensajeDeServicio").apply {
             setPackage(packageName)
             putExtra("Mensaje", "Conexión Bluetooth finalizada")
         }
