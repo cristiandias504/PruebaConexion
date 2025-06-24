@@ -22,13 +22,6 @@ import java.util.UUID
 
 class ServicioConexion : Service() {
 
-    private val requiredPermissions = arrayOf(
-        Manifest.permission.BLUETOOTH,
-        Manifest.permission.BLUETOOTH_CONNECT,
-        Manifest.permission.ACCESS_FINE_LOCATION,
-        Manifest.permission.ACCESS_COARSE_LOCATION
-    )
-
     private val deviceName = "ESP32"
     private val sppUUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB") // UUID estándar SPP
     private var btSocket: BluetoothSocket? = null
@@ -38,7 +31,6 @@ class ServicioConexion : Service() {
     private lateinit var handler: Handler
     private lateinit var runnable: Runnable
 
-    private var contador = 0
     private var tiempoInicio = 0L
 
     private var servicioActivo = false
@@ -90,14 +82,10 @@ class ServicioConexion : Service() {
                 return@Thread
             }
 
+
+
+
             try {
-                if (!hasPermissions()) {
-                    Handler(Looper.getMainLooper()).post {
-                        Toast.makeText(this, "Permisos necesarios no otorgados", Toast.LENGTH_SHORT)
-                            .show()
-                    }
-                    return@Thread
-                }
 
                 if (btAdapter == null) {
                     Handler(Looper.getMainLooper()).post {
@@ -126,8 +114,18 @@ class ServicioConexion : Service() {
                 Handler(Looper.getMainLooper()).post {
                     Toast.makeText(this, "Conectado Desde el Servicio", Toast.LENGTH_SHORT).show()
                 }
+                // Crear y enviar el broadcast
+                val intentBroadcast = Intent("com.example.pruebaconexion.MENSAJE").apply {
+                    setPackage(packageName)
+                    putExtra("Mensaje", "Mensaje enviado desde el Servicio")
+                }
+
+                Log.d("ServicioConexion", "Enviando broadcast...")
+                sendBroadcast(intentBroadcast)
+
                 conexionEstablecida = true
                 iniciarMensajePeriodico()
+                iniciarRecepcionMensajes()
 
             } catch (e: IOException) {
                 Handler(Looper.getMainLooper()).post {
@@ -135,6 +133,15 @@ class ServicioConexion : Service() {
                 }
                 Log.e("Bluetooth", "Error: ", e)
             }
+
+
+
+
+
+
+
+
+
         }.start()
     }
 
@@ -146,9 +153,11 @@ class ServicioConexion : Service() {
                 runnable = object : Runnable {
                     override fun run() {
                         enviarMensaje()
-                        handler.postDelayed(this, 10_000) // cada 30 segundos
+                        handler.postDelayed(this, 10_000) // cada 10 segundos
                     }
                 }
+                Log.d("ServicioConexion", "Handler Iniciado")
+
                 tiempoInicio = System.currentTimeMillis()
 
                 handler.post(runnable)
@@ -160,26 +169,76 @@ class ServicioConexion : Service() {
         if (btSocket != null && btSocket!!.isConnected) {
             try {
                 btSocket?.outputStream?.write("Hola desde el Servicio\n".toByteArray())
+                Log.d("ServicioConexion", "Mensaje enviado al ESP32")
             } catch (e: IOException){
-                Toast.makeText(this, "Error al enviar mensaje: ${e.message}", Toast.LENGTH_SHORT).show()
-                Log.e("Bluetooth", "Error al enviar", e)
+                Log.e("ServicioConexion", "Error al enviar", e)
+
             }
         } else {
-            Toast.makeText(this, "Dispositivo No Conectado", Toast.LENGTH_SHORT).show()
+            Handler(Looper.getMainLooper()).post {
+                Toast.makeText(this, "Dispositivo No Conectado", Toast.LENGTH_SHORT).show()
+            }
+            Log.d("ServicioConexion", "Dispositivo No Conectado")
         }
     }
 
-    private fun hasPermissions(): Boolean {
-        return requiredPermissions.all { permission ->
-            ActivityCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
-        }
+    private fun iniciarRecepcionMensajes() {
+        Thread {
+            try {
+                val inputStream = btSocket?.inputStream
+                val buffer = ByteArray(1024)
+                val mensajeAcumulado = StringBuilder()
+
+                while (btSocket != null && btSocket!!.isConnected) {
+                    val byte = inputStream?.read() ?: -1
+                    if (byte != -1) {
+                        val char = byte.toChar()
+
+                        if (char == '\n') {
+                            val mensajeCompleto = mensajeAcumulado.toString().trim()
+                            Log.d("Bluetooth", "Mensaje recibido: $mensajeCompleto")
+
+                            // Enviar a la actividad si quieres
+                            //val intent = Intent("com.example.pruebaconexion.MENSAJE").apply {
+                            //    putExtra("Mensaje", mensajeCompleto)
+                            //}
+                            //sendBroadcast(intent)
+
+                            mensajeAcumulado.clear() // reinicia para el siguiente mensaje
+                        } else {
+                            mensajeAcumulado.append(char)
+                        }
+                    }
+                }
+            } catch (e: IOException) {
+                Log.e("Bluetooth", "Error al recibir datos", e)
+            }
+        }.start()
     }
+
+
 
     override fun onDestroy() {
         handler.removeCallbacks(runnable)
         servicioActivo = false
-        contador = 0
         super.onDestroy()
+
+        // Cierra el socket Bluetooth
+        try {
+            btSocket?.close()
+            Log.d("ServicioConexion", "BluetoothSocket cerrado")
+        } catch (e: IOException) {
+            Log.e("ServicioConexion", "Error al cerrar el socket", e)
+        }
+
+        Log.d("ServicioConexion", "Finalizando Servicio")
+
+        val intentBroadcast = Intent("com.example.pruebaconexion.MENSAJE").apply {
+            setPackage(packageName)
+            putExtra("Mensaje", "Conexión Bluetooth finalizada")
+        }
+
+        sendBroadcast(intentBroadcast)
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
